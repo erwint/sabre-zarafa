@@ -65,10 +65,10 @@ class Zarafa_Folder
 		}
 		$ret = array(
 			'id' => $this->entryid,
-			'uri' => $this->get_name(),
+			'uri' => $this->get_name($principal_uri),
 			'description' => (isset($props[PR_COMMENT]) ? $props[PR_COMMENT] : ''),
 			'principaluri' => $principal_uri,
-			'displayname' => $this->get_name(),
+			'displayname' => $this->get_name($principal_uri),
 			'{' . Sabre\CardDAV\Plugin::NS_CARDDAV . '}addressbook-description' => (isset($props[PR_COMMENT]) ? $props[PR_COMMENT] : ''),
 			'{' . Sabre\CardDAV\Plugin::NS_CARDDAV . '}supported-address-data' => new Sabre\CardDAV\Property\SupportedAddressData()
 		);
@@ -382,8 +382,8 @@ class Zarafa_Folder
 		return $this->ctag;
 	}
 
-	private function
-	get_name ()
+	public function
+	get_name ($principal_uri)
 	{
 		if (FALSE($this->name)) {
 			if (!FALSE($props = $this->get_props()) && isset($props[PR_DISPLAY_NAME])) {
@@ -394,8 +394,11 @@ class Zarafa_Folder
 		if (!defined('FOLDER_RENAME_PATTERN')) {
 			return $this->name;
 		}
+		list(,$user) = Sabre\DAV\URLUtil::splitPath($principal_uri);
+		
 		$subst = array
 			( '%d' => $this->name			// Display name
+			, '%u' => $user			// User name 
 			, '%p' => $this->store->storetype	// Provenance ('private' or 'public')
 			) ;
 

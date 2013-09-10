@@ -72,13 +72,26 @@ class Zarafa_Principals_Backend implements Sabre\DAVACL\PrincipalBackend\Backend
 			$this->logger->warn('Not connected');
 			return array();
 		}
-		return array(
-			array(
-				'uri' => "principals/$connected_user",
-				'{DAV:}displayname' => $connected_user,
-				'{http://sabredav.org/ns}email-address' => $this->bridge->getConnectedUserMailAddress()
-			)
-		);
+		
+		// list all users
+		$users = $this->bridge->getUserList();
+		
+		$principals = array();
+		foreach ($users as $userName => $userData) {
+			$principals[] =  array(
+			'uri' => "principals/$userName",
+			'{DAV:}displayname' => $userName,
+			'{http://sabredav.org/ns}email-address' => $userData["emailaddress"]
+			);
+		}
+		
+		// add the public user
+		$principals[] =  array(
+			'uri' => "principals/public",
+			'{DAV:}displayname' => 'public',
+			);
+		
+		return $principals;
 	}
 
 	/**

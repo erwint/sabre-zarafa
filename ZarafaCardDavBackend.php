@@ -68,11 +68,8 @@ class Zarafa_CardDav_Backend extends Sabre\CardDAV\Backend\AbstractBackend
 	getAddressBooksForUser ($principalUri)
 	{
 		$this->logger->trace(__FUNCTION__."($principalUri)");
-
-		$folders = array_merge(
-			$this->bridge->get_folders_private($principalUri),
-			$this->bridge->get_folders_public($principalUri)
-		);
+		
+		$folders = $this->bridge->get_folders($principalUri);
 		$dump = print_r($folders, true);
 		$this->logger->debug("Address books:\n$dump");
 
@@ -120,6 +117,8 @@ class Zarafa_CardDav_Backend extends Sabre\CardDAV\Backend\AbstractBackend
 	createAddressBook ($principalUri, $url, array $properties)
 	{
 		$this->logger->trace(__FUNCTION__."($principalUri, $url, (properties))");
+
+		
 
 		// FIXME: we don't actually do anything with the principal URI or the
 		// url; we just create a folder in the root of the user's private store.

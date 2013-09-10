@@ -151,5 +151,6 @@
 	// Change the name of the folder as returned by Sabre-Zarafa.
 	// Format options available:
 	//  %d - display name (default up to 0.20)
+	//  %u - user name 
 	//  %p - provenance, either 'public' or 'private'
-	define('FOLDER_RENAME_PATTERN', '%d');
+	define('FOLDER_RENAME_PATTERN', '%d-%u');

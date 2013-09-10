@@ -58,11 +58,12 @@ class Zarafa_Bridge {
 	protected $wastebasketId = FALSE;
 	protected $extendedProperties = FALSE;
 	protected $connectedUser = FALSE;
-	private $folders_private = array();
+	private $folders_user_private = array();
 	private $folders_public = array();
 	private $stores_table = FALSE;
-	private $stores_private = array();
+	private $stores_user_private = array();
 	private $stores_public = array();
+	private $default_store = FALSE;
 	private $logger;
 
 	/**
@@ -93,8 +94,8 @@ class Zarafa_Bridge {
 			$this->logger->fatal(__FUNCTION__.': could not get messagestore table');
 			return FALSE;
 		}
-		if (FALSE($this->stores_get_private())) {
-			$this->logger->warn(__FUNCTION__.': could not get private stores');
+		if (FALSE($this->store_get_default())) {
+			$this->logger->warn(__FUNCTION__.': could not get default store');
 			return FALSE;
 		}
 		if (FALSE($this->stores_get_public())) {
@@ -121,14 +122,28 @@ class Zarafa_Bridge {
 	 * @return ZarafaStore|FALSE
 	 */
 	public function
-	get_private_store()
+	get_private_store($user)
 	{
 		// This function gets the *first* private store.
 		// What happens when the user has more than one?
-		$this->logger->trace(__FUNCTION__);
-		return (isset($this->stores_private[0]))
-			? $this->stores_private[0]
-			: FALSE;
+		$this->logger->trace(__FUNCTION__." $user");
+		
+		if (array_key_exists($user, $this->stores_user_private)) 
+		{
+			$user_store = $this->stores_user_private[$user];
+		}
+		else
+		{
+			$this->logger->trace(__FUNCTION__.': loading private store of '.$user);
+			$user_store = $this->stores_get_private($user);
+			if (FALSE($user_store)) {
+				$this->logger->warn(__FUNCTION__.': could not get private stores of '.$user);
+				return FALSE;
+			}
+			$this->stores_user_private[$user] = $user_store;
+		}
+		
+		return $user_store;
 	}
 	
 	/**
@@ -151,6 +166,12 @@ class Zarafa_Bridge {
 		return $this->extendedProperties;
 	}
 
+	public function
+	getPrincipalUri($name)
+	{
+		return "principals/$name";
+	}
+	
 	/**
 	 * Get connected user email address
 	 * @return email address
@@ -163,31 +184,129 @@ class Zarafa_Bridge {
 		static $userinfo = FALSE;
 
 		if (FALSE($userinfo)) {
-			$userinfo = $this->stores_private[0]->getuser_by_name($this->connectedUser);
+			$userinfo = $this->default_store->getuser_by_name($this->connectedUser);
 		}
 		$this->logger->debug("User email address: {$userinfo['emailaddress']}");
 		return $userinfo['emailaddress'];
 	}
 	
+	public function
+	getUserList()
+	{
+		$this->logger->trace($this->default_store->handle);
+		return mapi_zarafa_getuserlist($this->default_store->handle);
+	}
+	
 	private function
-	stores_get_private ()
+	store_get_default ()
 	{
 		$this->logger->trace(__FUNCTION__);
-
-		if (FALSE(tbl_restrict_propval($this->stores_table, PR_MDB_PROVIDER, ZARAFA_SERVICE_GUID, RELOP_EQ))) {
-			return FALSE;
-		}
-		if (FALSE($stores = mapi_table_queryallrows($this->stores_table, array(PR_ENTRYID)))) {
+		tbl_restrict_none($this->stores_table);
+		if (FALSE($stores = mapi_table_queryallrows($this->stores_table, array(PR_DEFAULT_STORE, PR_ENTRYID)))) {
 			return FALSE;
 		}
 		foreach ($stores as $store) {
-			if (FALSE($handle = mapi_openmsgstore($this->session, $store[PR_ENTRYID]))) {
-				$this->logger->warn(__FUNCTION__.': failed to open private store');
-				continue;
+			if ($store[PR_DEFAULT_STORE]){
+				if (FALSE($handle = mapi_openmsgstore($this->session, $store[PR_ENTRYID]))) {
+					$this->logger->warn(__FUNCTION__.': failed to open private store');
+					continue;
+				}
+				
+				$this->default_store = new Zarafa_Store($this, $store[PR_ENTRYID], $handle, 'private');
+				
+				
+			// first check if property exist and we can open that using mapi_openproperty
+			$storeProps = mapi_getprops($this->default_store->handle, array(PR_EC_WEBACCESS_SETTINGS_JSON));
+
+			if(isset($storeProps[PR_EC_WEBACCESS_SETTINGS_JSON]) || propIsError(PR_EC_WEBACCESS_SETTINGS_JSON, $storeProps) == MAPI_E_NOT_ENOUGH_MEMORY) {
+				// read the settings property
+				$stream = mapi_openproperty($this->default_store->handle, PR_EC_WEBACCESS_SETTINGS_JSON, IID_IStream, 0, 0);
+				if ($stream == false) {
+					throw new SettingsException(_('Error opening settings property'));
+				}
+
+				$stat = mapi_stream_stat($stream);
+				mapi_stream_seek($stream, 0, STREAM_SEEK_SET);
+				$settings_string = '';
+				for($i=0;$i<$stat['cb'];$i+=1024){
+					$settings_string .= mapi_stream_read($stream, 1024);
+				}
+
+				$settings = json_decode($settings_string, true);
+
+				if (is_array($settings) && isset($settings['settings']) && is_array($settings['settings'])){
+					$dump = print_r($settings['settings'], true);
+					$this->logger->debug('Settings : '.$dump);
+					
+					$other_users = $this->get($settings['settings'], "zarafa/v1/contexts/hierarchy/shared_stores",null);
+
+					$dump = print_r($other_users, true);
+					$this->logger->debug('Ohter users: '.$dump);
+				}
 			}
-			$this->stores_private[] = new Zarafa_Store($this, $store[PR_ENTRYID], $handle, 'private');
+				
+				
+				
+				return TRUE;
+				
+			}
 		}
-		return TRUE;
+		$this->logger->warn(__FUNCTION__.': default store not found');
+		return FALSE;
+	}
+	
+	
+		private function get($settings, $path, $default=null)
+		{
+	
+			$path = explode('/', $path);
+
+			$tmp = $settings;
+			foreach($path as $pointer){
+				if (!empty($pointer)){
+					if (!isset($tmp[$pointer])){
+						return $default;
+					}
+					$tmp = $tmp[$pointer];
+				}
+			}
+			return $tmp;
+		}
+	
+	private function
+	stores_get_private ($user)
+	{
+		$this->logger->trace(__FUNCTION__);
+		
+		if ($user == $this->connectedUser) {
+			if (FALSE(tbl_restrict_propval($this->stores_table, PR_MDB_PROVIDER, ZARAFA_SERVICE_GUID, RELOP_EQ))) {
+				return FALSE;
+			}
+			if (FALSE($stores = mapi_table_queryallrows($this->stores_table, array(PR_ENTRYID)))) {
+				return FALSE;
+			}
+			if (count($stores) == 0) {
+				return FALSE;
+			}
+			$entryid = $stores[0][PR_ENTRYID];
+		} else {
+			$this->logger->trace(__FUNCTION__.": open store of user $user");
+			
+			// open the store of another user
+			$userstoreentryid = mapi_msgstore_createentryid($this->default_store->handle, $user);
+			if(!$userstoreentryid) {
+			  $this->logger->warn(__FUNCTION__.": Unknown user $user");
+			  return FALSE;
+			}
+			$entryid = $userstoreentryid;
+		}
+		if (FALSE($handle = mapi_openmsgstore($this->session, $entryid))) {
+			$this->logger->warn(__FUNCTION__.': failed to open private store for '.$user);
+			return FALSE;
+		}
+		$this->logger->trace(__FUNCTION__.': loaded store '.$entryid);
+			
+		return new Zarafa_Store($this, $entryid, $handle, 'private');
 	}
 
 	private function
@@ -212,22 +331,31 @@ class Zarafa_Bridge {
 	}
 
 	public function
-	get_folders_private ($principal_uri)
+	get_folders ($principal_uri)
 	{
 		$this->logger->trace(__FUNCTION__."($principal_uri)");
 
-		foreach ($this->stores_private as $store) {
-			$this->folders_private = array_merge($this->folders_private, $store->get_dav_folders($principal_uri));
+		list(,$user) = Sabre\DAV\URLUtil::splitPath($principal_uri);
+		if ($user == "public")
+		{
+			return $this->get_folders_public($principal_uri);
 		}
-		return $this->folders_private;
+		else 
+		{
+			$user = $this->get_user($principal_uri);
+			$store = $this->get_private_store($user);
+			return $store->get_dav_folders($principal_uri);
+		}
 	}
 
-	public function
+	private function
 	get_folders_public ($principal_uri)
 	{
 		$this->logger->trace(__FUNCTION__."($principal_uri)");
 
+		$this->folders_public = array();
 		foreach ($this->stores_public as $store) {
+		$this->logger->trace(__FUNCTION__."folder for ($principal_uri)");
 			$this->folders_public = array_merge($this->folders_public, $store->get_dav_folders($principal_uri));
 		}
 		return $this->folders_public;
@@ -310,7 +438,7 @@ class Zarafa_Bridge {
 	public function
 	get_folder ($entryid)
 	{
-		foreach ($this->stores_private as $store) {
+		foreach (array_values($this->stores_user_private) as $store) {
 			if (!FALSE($folder = $store->get_folder($entryid))) {
 				return $folder;
 			}
@@ -587,7 +715,7 @@ class Zarafa_Bridge {
 		$properties["carddav_version"] = PR_CARDDAV_RAW_DATA_VERSION;
 		
 		// Ask Mapi to load those properties and store mapping.
-		$this->extendedProperties = $this->stores_private[0]->get_propids_from_strings($properties);
+		$this->extendedProperties = $this->default_store->get_propids_from_strings($properties);
 		
 		// Dump properties to debug
 		$dump = print_r ($this->extendedProperties, true);
@@ -715,5 +843,13 @@ class Zarafa_Bridge {
 			PR_ATTACH_NUM => 1
 		);
 		return $this->save_properties($attach, $properties);
+	}
+
+	
+	private function
+	get_user ($principaluri) 
+	{
+		list(,$name) = Sabre\DAV\URLUtil::splitPath($principaluri);
+		return $name;
 	}
 }

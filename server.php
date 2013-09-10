@@ -69,6 +69,12 @@ function uncaught_error_handler ($errno, $errstr, $errfile, $errline)
 	include "ZarafaAuthBackend.php";			// Authentification
 	include "ZarafaCardDavBackend.php";			// CardDav
 	include "ZarafaPrincipalsBackend.php";		// Principals
+	include "ZarafaPrincipal.php";		// Principals
+	include "ZarafaPrincipalCollection.php";		// Principals
+	include "ZarafaCard.php";		// Principals
+	include "ZarafaAddressBook.php";		// Principals
+	include "ZarafaUserAddressBooks.php";		// Principals
+	include "ZarafaAddressBookRoot.php";		// Principals
 
 	function checkMapiError($msg) {
 		global $logger;
@@ -90,8 +96,8 @@ function uncaught_error_handler ($errno, $errstr, $errfile, $errline)
 
 	// Setting up the directory tree // 
 	$nodes = array(
-		new Sabre\DAVACL\PrincipalCollection($principalBackend),
-		new Sabre\CardDAV\AddressBookRoot($principalBackend, $carddavBackend)
+		new Zarafa_Principal_Collection($bridge, $principalBackend),
+		new Zarafa_Address_Book_Root($bridge, $principalBackend, $carddavBackend)
 	);
 
 	// The object tree needs in turn to be passed to the server class
